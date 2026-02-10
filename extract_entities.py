@@ -84,10 +84,14 @@ def extract_characters(anilist_data: dict, jikan_data: dict, franchise_slug: str
             if mal_id in anilist_chars:
                 anilist_char = anilist_chars[mal_id]
                 char_name = anilist_char['name'] or char.get('name', '')
-                char_slug = slugify(char_name)
+                name_slug = slugify(char_name)
                 
-                if not char_slug:
+                if not name_slug:
                     continue
+                
+                # Folder name: {mal_id}-{anilist_id}-{name}-{franchise}
+                anilist_id = mal_id  # Currently matched by shared ID
+                char_slug = f"{mal_id}-{anilist_id}-{name_slug}-{franchise_slug}"
                 
                 # Extract MAL voice actors (Japanese only for cross-reference)
                 mal_voice_actors = []
@@ -188,10 +192,13 @@ def extract_staff(anilist_data: dict, jikan_data: dict, franchise_slug: str, ent
             
             if matched_anilist:
                 staff_name = matched_anilist['name']
-                staff_slug = slugify(staff_name)
+                name_slug = slugify(staff_name)
                 
-                if not staff_slug:
+                if not name_slug:
                     continue
+                
+                # Folder name: {mal_id}-{anilist_id}-{name}
+                staff_slug = f"{mal_id}-{matched_anilist['id']}-{name_slug}"
                 
                 # Combine roles from both sources
                 roles = []
@@ -279,10 +286,13 @@ def extract_companies(anilist_data: dict, jikan_data: dict, franchise_slug: str,
         if normalized_mal in anilist_studios:
             anilist_studio = anilist_studios[normalized_mal]
             company_name = anilist_studio['name']
-            company_slug = slugify(company_name)
+            name_slug = slugify(company_name)
             
-            if not company_slug:
+            if not name_slug:
                 continue
+            
+            # Folder name: {mal_id}-{anilist_id}-{name}
+            company_slug = f"{mal_id}-{anilist_studio['id']}-{name_slug}"
             
             if company_slug not in companies:
                 companies[company_slug] = {
@@ -474,8 +484,9 @@ def extract_franchise_entities(franchise_slug: str) -> dict:
     for studio_id, al_info in al_studios_by_id.items():
         if studio_id in mal_studios_by_id:
             mal_info = mal_studios_by_id[studio_id]
-            company_slug = slugify(al_info['name'])
-            if company_slug and company_slug not in all_companies:
+            name_slug = slugify(al_info['name'])
+            company_slug = f"{studio_id}-{studio_id}-{name_slug}"
+            if name_slug and company_slug not in all_companies:
                 all_companies[company_slug] = {
                     'name': al_info['name'],
                     'slug': company_slug,
