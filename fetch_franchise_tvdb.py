@@ -431,15 +431,17 @@ def match_tvdb_seasons_to_anilist(tvdb_series: dict, franchise_name: str) -> lis
     """
     For a TVDB series with multiple seasons, find matching AniList entries per season.
     
-    NEW MATCHING STRATEGY (v2 - Feb 2026):
+    NEW MATCHING STRATEGY (v3 - Feb 2026 - Multi-Match):
     - Match by FRANCHISE name (not season name - TVDB season names are often empty!)
-    - Episode count within ±2
-    - Air date within ±30 days
-    - Pick closest match by air date if multiple candidates
-    - TVDB season names are still captured as metadata but NOT used for matching
+    - Calculate TVDB season date range from ALL episode air dates (earliest → latest)
+    - Check if AniList entry date range OVERLAPS with TVDB season date range
+    - ALLOW MULTIPLE AniList entries to match a single TVDB season (multi-cour support)
+    - Example: AoT S4 "The Final Season" (2020-2023) matches 3 AniList entries (Part 1, Part 2, Final Chapters)
     
-    Returns list of {season_number, tvdb_season, anilist_match, season_name_en, season_name_jp} dicts.
+    Returns list of {season_number, tvdb_season, anilist_matches: [...], season_name_en, season_name_jp} dicts.
     """
+    from datetime import datetime, timedelta
+    
     seasons = tvdb_series.get("seasons", [])
     # Filter to aired-order seasons (type.id == 1), skip specials (S0)
     aired_seasons = [
@@ -483,14 +485,15 @@ def match_tvdb_seasons_to_anilist(tvdb_series: dict, franchise_name: str) -> lis
         except Exception:
             pass
 
-    # Dedupe and filter to TV format only
+    # Dedupe and filter to TV/SPECIAL format (SPECIAL can include final chapters/compilation)
     seen = set()
     pool = []
     for c in al_pool:
         if c["id"] not in seen:
             seen.add(c["id"])
-            # Only consider TV format for season matching
-            if c.get("format") in ("TV", "TV_SHORT", None):
+            # Consider TV, TV_SHORT, and SPECIAL (for final chapters, OVAs that are part of main story)
+            # Exclude MOVIE, OVA, ONA formats as those are usually separate entries
+            if c.get("format") in ("TV", "TV_SHORT", "SPECIAL", None):
                 pool.append(c)
 
     # Sort pool by start date to help with chronological matching
@@ -500,8 +503,8 @@ def match_tvdb_seasons_to_anilist(tvdb_series: dict, franchise_name: str) -> lis
         x.get("startDate", {}).get("day") or 99,
     ))
 
-    # Match each TVDB season to best AniList entry
-    used_al_ids = set()
+    # Match each TVDB season to ALL matching AniList entries (multi-match!)
+    # REMOVED: used_al_ids set — we now allow reuse across seasons
 
     for tvdb_season in aired_seasons:
         s_num = tvdb_season.get("number", 0)
@@ -512,12 +515,23 @@ def match_tvdb_seasons_to_anilist(tvdb_series: dict, franchise_name: str) -> lis
         s_episodes = episodes_by_season.get(s_num, [])
         s_episode_count = len(s_episodes)
         
-        # Get first episode air date (episodes are usually sorted by number)
-        s_first_aired = ""
+        # Calculate TVDB season date range from ALL episode air dates
+        s_start_date = None
+        s_end_date = None
         if s_episodes:
-            # Sort by episode number to get first
-            sorted_eps = sorted(s_episodes, key=lambda e: e.get("number", 0))
-            s_first_aired = sorted_eps[0].get("aired", "")
+            episode_dates = []
+            for ep in s_episodes:
+                aired = ep.get("aired", "")
+                if aired:
+                    try:
+                        ep_date = datetime.fromisoformat(aired[:10])
+                        episode_dates.append(ep_date)
+                    except Exception:
+                        pass
+            
+            if episode_dates:
+                s_start_date = min(episode_dates)
+                s_end_date = max(episode_dates)
         
         # Try to get Japanese name from TVDB translations
         s_name_jp = ""
@@ -529,36 +543,42 @@ def match_tvdb_seasons_to_anilist(tvdb_series: dict, franchise_name: str) -> lis
             except Exception:
                 pass
 
-        best_match = None
-        best_score = 0
-        best_date_diff = 999999  # Track date proximity for tiebreaking
+        # Find ALL matching AniList entries (multi-match!)
+        anilist_matches = []
 
         for cand in pool:
-            if cand["id"] in used_al_ids:
-                continue
-
-            # Episode count matching (±2 tolerance)
-            cand_eps = cand.get("episodes") or 0
-            ep_diff = abs(s_episode_count - cand_eps) if s_episode_count and cand_eps else 999
-            ep_match = (ep_diff <= 2)
-
-            # Air date matching (±30 days tolerance)
+            # Parse AniList dates
             cand_start = _format_date(cand.get("startDate"))
-            date_match = dates_match(s_first_aired, cand_start, tolerance_days=30) if s_first_aired and cand_start else False
+            cand_end = _format_date(cand.get("endDate"))
             
-            # Calculate date difference in days for tiebreaking
-            date_diff = 999999
-            if s_first_aired and cand_start:
-                try:
-                    from datetime import datetime
-                    tvdb_date = datetime.fromisoformat(s_first_aired)
-                    al_date = datetime.fromisoformat(cand_start)
-                    date_diff = abs((tvdb_date - al_date).days)
-                except Exception:
-                    pass
-
+            if not cand_start:
+                continue  # Can't match without start date
+            
+            try:
+                al_start = datetime.fromisoformat(cand_start[:10])
+                # If no end date, assume it's still airing or use start date
+                al_end = datetime.fromisoformat(cand_end[:10]) if cand_end else al_start
+            except Exception:
+                continue
+            
+            # Check date range overlap with tolerance (±30 days on each end)
+            tolerance = timedelta(days=30)
+            
+            # Skip if we don't have TVDB dates
+            if not s_start_date or not s_end_date:
+                continue
+            
+            # Date range overlap check:
+            # AniList range: [al_start, al_end]
+            # TVDB range: [s_start_date, s_end_date]
+            # Overlap if: al_start <= s_end_date + tolerance AND al_end >= s_start_date - tolerance
+            overlap = (al_start <= s_end_date + tolerance) and (al_end >= s_start_date - tolerance)
+            
+            if not overlap:
+                continue
+            
             # Franchise name check (verify we're in the same franchise)
-            # Use fuzzy matching to handle variations
+            # For SPECIAL format, use more lenient matching (SPECIALs often have long descriptive titles)
             titles = []
             t = cand.get("title", {})
             for key in ("english", "romaji", "native"):
@@ -566,66 +586,88 @@ def match_tvdb_seasons_to_anilist(tvdb_series: dict, franchise_name: str) -> lis
                     titles.append(t[key])
             titles.extend(cand.get("synonyms", []) or [])
             
-            franchise_match = max((_ratio(franchise_name, title) for title in titles if title), default=0) >= 60
-
-            # Scoring: both episode count AND date must match
-            # Franchise name is a sanity check (should be high for all pool members)
-            score = 0
-            if franchise_match:
-                score += 30  # Base franchise match
-            if ep_match:
-                score += 40  # Episode count is crucial
-            if date_match:
-                score += 40  # Air date is crucial
+            # Check if franchise name appears as substring (for long special titles)
+            franchise_lower = franchise_name.lower()
+            substring_match = any(franchise_lower in (title or "").lower() for title in titles)
             
-            # Bonus for exact episode match
-            if ep_diff == 0:
+            # OR check fuzzy score (stricter for TV, more lenient for SPECIAL)
+            fuzzy_threshold = 40 if cand.get("format") == "SPECIAL" else 60
+            fuzzy_match = max((_ratio(franchise_name, title) for title in titles if title), default=0) >= fuzzy_threshold
+            
+            franchise_match = substring_match or fuzzy_match
+            
+            if not franchise_match:
+                continue  # Must be in same franchise
+            
+            # Calculate match score based on date overlap quality and episode count
+            cand_eps = cand.get("episodes") or 0
+            ep_diff = abs(s_episode_count - cand_eps) if s_episode_count and cand_eps else 999
+            
+            # Overlap days
+            overlap_start = max(al_start, s_start_date)
+            overlap_end = min(al_end, s_end_date)
+            overlap_days = (overlap_end - overlap_start).days
+            
+            # For single-day events (like movie/special compilations), treat as if they match if within range
+            is_single_day = (al_start == al_end)
+            within_range = (s_start_date <= al_start <= s_end_date)
+            
+            # Score: prioritize strong date overlap
+            score = 50  # Base for passing overlap check
+            
+            # Bonus for longer overlap (but skip for single-day events within range)
+            if is_single_day and within_range:
+                score += 15  # Single-day special within season date range
+            elif overlap_days > 30:
+                score += 20
+            elif overlap_days > 7:
                 score += 10
-
-            # Track best match, using date proximity as tiebreaker
-            if score > best_score or (score == best_score and date_diff < best_date_diff):
-                best_score = score
-                best_match = cand
-                best_date_diff = date_diff
-
-        # Accept match if we have both episode AND date match (score >= 70)
-        # OR if we have one strong signal with franchise confirmation (score >= 60)
-        if best_match and best_score >= 60:
-            used_al_ids.add(best_match["id"])
-            al_title = best_match.get("title", {}).get("english") or best_match.get("title", {}).get("romaji", "?")
-            al_eps = best_match.get("episodes", "?")
             
-            # Log the match with details
-            match_details = f"eps:{s_episode_count}→{al_eps}"
-            if s_first_aired:
-                match_details += f", date:{s_first_aired[:10]}"
+            # Bonus for episode count closeness (but be lenient for SPECIAL format)
+            if cand.get("format") == "SPECIAL" and cand_eps <= 2:
+                # Short specials/movies are expected to have low episode counts
+                score += 5
+            elif ep_diff <= 2:
+                score += 15
+            elif ep_diff <= 5:
+                score += 5
             
-            print(f"    S{s_num} → AniList: {al_title} ({match_details}, score:{best_score:.0f}, AL:{best_match['id']})")
-            
-            results.append({
-                "season_number": s_num,
-                "tvdb_season": tvdb_season,
-                "anilist_match": best_match,
-                "match_score": best_score,
-                "season_name_en": s_name_en,  # Metadata only
-                "season_name_jp": s_name_jp,  # Metadata only
-            })
+            # Accept if score is reasonable (lower threshold for specials)
+            threshold = 60 if cand.get("format") != "SPECIAL" else 55
+            if score >= threshold:
+                anilist_matches.append({
+                    "anilist_id": cand["id"],
+                    "mal_id": cand.get("idMal"),
+                    "title": cand.get("title", {}).get("english") or cand.get("title", {}).get("romaji", "?"),
+                    "episodes": cand_eps,
+                    "start_date": cand_start,
+                    "end_date": cand_end,
+                    "match_score": score,
+                    "overlap_days": overlap_days,
+                })
+        
+        # Sort matches by start date (chronological)
+        anilist_matches.sort(key=lambda m: m["start_date"])
+        
+        # Log matches
+        if anilist_matches:
+            print(f"    S{s_num} → {len(anilist_matches)} AniList match(es):")
+            for m in anilist_matches:
+                print(f"      • {m['title']} (eps:{m['episodes']}, {m['start_date'][:10]}→{m['end_date'][:10] if m['end_date'] else '?'}, AL:{m['anilist_id']}, score:{m['match_score']:.0f})")
         else:
-            # Log why it didn't match
-            if best_match:
-                al_title = best_match.get("title", {}).get("english") or best_match.get("title", {}).get("romaji", "?")
-                print(f"    S{s_num} → No match (best: {al_title}, score:{best_score:.0f} < threshold)")
-            else:
-                print(f"    S{s_num} → No candidates in pool")
-            
-            results.append({
-                "season_number": s_num,
-                "tvdb_season": tvdb_season,
-                "anilist_match": None,
-                "match_score": best_score,
-                "season_name_en": s_name_en,  # Still capture metadata
-                "season_name_jp": s_name_jp,  # Still capture metadata
-            })
+            print(f"    S{s_num} → No AniList matches (date range: {s_start_date.strftime('%Y-%m-%d') if s_start_date else '?'}→{s_end_date.strftime('%Y-%m-%d') if s_end_date else '?'})")
+        
+        results.append({
+            "season_number": s_num,
+            "tvdb_season": tvdb_season,
+            "anilist_matches": anilist_matches,  # NOW A LIST!
+            "season_name_en": s_name_en,  # Metadata only
+            "season_name_jp": s_name_jp,  # Metadata only
+            "tvdb_date_range": {
+                "start": s_start_date.strftime("%Y-%m-%d") if s_start_date else None,
+                "end": s_end_date.strftime("%Y-%m-%d") if s_end_date else None,
+            }
+        })
 
     return results
 
@@ -693,47 +735,67 @@ def save_entry_data(franchise_slug: str, entry_slug: str, tvdb_data: dict | None
         save_jikan_anime_source(jikan_data, jikan_chars or [], jikan_staff or [],
                                 franchise_slug, entry_slug)
 
-    # Season-level AniList/Jikan data
+    # Season-level AniList/Jikan data (v3: multi-match support!)
     if season_matches:
         seasons_manifest = []
         for sm in season_matches:
             s_num = sm["season_number"]
-            al = sm.get("anilist_match")
-            if not al:
-                continue
-
-            # Save season-level AniList data
-            season_dir = os.path.join(base, "_season_sources", f"anilist_s{s_num}", "sources")
-            ensure_dir(season_dir)
-
-            # Fetch full detail for this season's AniList entry
-            al_detail = fetch_anilist_detail(al["id"])
-            if al_detail:
-                save_anime_source(al_detail, franchise_slug, entry_slug)
-                # Also save to season-specific dir
-                save_json(os.path.join(season_dir, "anilist_raw.json"), al_detail)
-
-            # Fetch Jikan for this season
-            mal_id = al.get("idMal")
-            if mal_id:
-                jk = fetch_jikan_by_mal_id(mal_id)
-                jk_chars = fetch_jikan_characters(mal_id)
-                jk_staff = fetch_jikan_staff(mal_id)
-                jk_dir = os.path.join(base, "_season_sources", f"jikan_s{s_num}", "sources")
-                ensure_dir(jk_dir)
-                if jk:
-                    save_json(os.path.join(jk_dir, "jikan_raw.json"), jk)
-
-            seasons_manifest.append({
+            al_matches = sm.get("anilist_matches", [])  # NOW A LIST!
+            
+            season_entry = {
                 "season_number": s_num,
                 "tvdb_season_id": sm["tvdb_season"].get("id", ""),
                 "tvdb_season_name_en": sm.get("season_name_en", ""),
                 "tvdb_season_name_jp": sm.get("season_name_jp", ""),
-                "anilist_id": al["id"],
-                "mal_id": al.get("idMal", ""),
-                "match_score": sm.get("match_score", 0),
-                "title": al.get("title", {}).get("english") or al.get("title", {}).get("romaji", ""),
-            })
+                "tvdb_date_range_start": sm.get("tvdb_date_range", {}).get("start", ""),
+                "tvdb_date_range_end": sm.get("tvdb_date_range", {}).get("end", ""),
+                "anilist_matches": [],  # List of all matches
+            }
+            
+            if not al_matches:
+                # No matches for this season
+                seasons_manifest.append(season_entry)
+                continue
+            
+            # Process each AniList match for this season
+            for idx, al in enumerate(al_matches):
+                # Save season-level AniList data
+                # Use index suffix for multiple matches: anilist_s4_0, anilist_s4_1, etc.
+                season_dir = os.path.join(base, "_season_sources", f"anilist_s{s_num}_{idx}", "sources")
+                ensure_dir(season_dir)
+
+                # Fetch full detail for this season's AniList entry
+                al_id = al.get("anilist_id")
+                al_detail = fetch_anilist_detail(al_id)
+                if al_detail:
+                    save_anime_source(al_detail, franchise_slug, entry_slug)
+                    # Also save to season-specific dir
+                    save_json(os.path.join(season_dir, "anilist_raw.json"), al_detail)
+
+                # Fetch Jikan for this season
+                mal_id = al.get("mal_id")
+                if mal_id:
+                    jk = fetch_jikan_by_mal_id(mal_id)
+                    jk_chars = fetch_jikan_characters(mal_id)
+                    jk_staff = fetch_jikan_staff(mal_id)
+                    jk_dir = os.path.join(base, "_season_sources", f"jikan_s{s_num}_{idx}", "sources")
+                    ensure_dir(jk_dir)
+                    if jk:
+                        save_json(os.path.join(jk_dir, "jikan_raw.json"), jk)
+                
+                # Add to season entry's match list
+                season_entry["anilist_matches"].append({
+                    "anilist_id": al.get("anilist_id"),
+                    "mal_id": al.get("mal_id", ""),
+                    "title": al.get("title", ""),
+                    "episodes": al.get("episodes", ""),
+                    "start_date": al.get("start_date", ""),
+                    "end_date": al.get("end_date", ""),
+                    "match_score": al.get("match_score", 0),
+                    "overlap_days": al.get("overlap_days", 0),
+                })
+            
+            seasons_manifest.append(season_entry)
 
         # Save seasons manifest
         if seasons_manifest:
@@ -882,6 +944,10 @@ def fetch_franchise(franchise_name: str, include_movies: bool = True,
             entry_type=entry_type, season_matches=season_matches,
         )
 
+        # Count total AniList matches across all seasons (v3: multi-match)
+        total_al_matches = sum(len(s.get("anilist_matches", [])) for s in (season_matches or []))
+        seasons_with_matches = len([s for s in (season_matches or []) if s.get("anilist_matches")])
+        
         manifest_entries.append({
             "slug": entry_slug,
             "name": tvdb_name,
@@ -891,8 +957,9 @@ def fetch_franchise(franchise_name: str, include_movies: bool = True,
             "anilist_id": al_match["id"] if al_match else None,
             "mal_id": al_match.get("idMal") if al_match else None,
             "year": tvdb_entry.get("year", ""),
-            "seasons_matched": len([s for s in (season_matches or []) if s.get("anilist_match")]),
+            "seasons_with_matches": seasons_with_matches,
             "seasons_total": len(season_matches or []),
+            "total_anilist_matches": total_al_matches,  # NEW: total AniList entries matched
         })
 
         print(f"  ✓ Saved to franchises/{franchise_slug}/entries/{entry_slug}/")
