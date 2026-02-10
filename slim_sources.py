@@ -6,15 +6,22 @@ Extracts only the fields needed for data entry.
 import json
 import sys
 
+from config.role_blacklists import is_creator_role_blocked, is_company_role_blocked
+
+
 def slim_anilist(data: dict) -> dict:
     """Extract essential fields from AniList data.
     
-    Limits staff to 15 (key roles) and characters to 15 (main + top supporting).
+    Filters blacklisted roles, then limits staff to 15 and characters to 15.
     """
     # Priority roles for staff
     priority_roles = ['director', 'original creator', 'series composition', 'music', 'character design']
     
     staff_edges = data.get("staff", {}).get("edges") or []
+    
+    # Filter out blacklisted roles first
+    staff_edges = [e for e in staff_edges if not is_creator_role_blocked(e.get("role", ""))]
+    
     # Sort: priority roles first, then by order
     def staff_priority(e):
         role = (e.get("role") or "").lower()
@@ -43,6 +50,7 @@ def slim_anilist(data: dict) -> dict:
         "studios": [
             {"id": s.get("id"), "name": s.get("name"), "isAnimationStudio": s.get("isAnimationStudio")}
             for s in (data.get("studios", {}).get("nodes") or [])
+            if s.get("isAnimationStudio") or not is_company_role_blocked("other")  # Keep animation studios, filter "other"
         ],
         "staff": [
             {
@@ -128,7 +136,7 @@ def slim_tvdb(data: dict) -> dict:
 def slim_mal(data: dict) -> dict:
     """Extract essential fields from MAL/Jikan data.
     
-    Limits staff to 15 (key roles) and characters to 15 (Main + top Supporting).
+    Filters blacklisted roles, then limits staff to 15 and characters to 15.
     """
     anime = data.get("anime", {})
     
@@ -136,6 +144,18 @@ def slim_mal(data: dict) -> dict:
     priority_positions = ['director', 'original creator', 'series composition', 'music', 'character design', 'producer']
     
     staff_list = data.get("staff", [])
+    
+    # Filter out staff with only blacklisted positions
+    def has_valid_position(s):
+        positions = s.get("positions", [])
+        return any(not is_creator_role_blocked(p) for p in positions)
+    
+    staff_list = [s for s in staff_list if has_valid_position(s)]
+    
+    # Also filter the positions themselves within each staff entry
+    for s in staff_list:
+        s["positions"] = [p for p in s.get("positions", []) if not is_creator_role_blocked(p)]
+    
     def staff_priority(s):
         positions = [p.lower() for p in s.get("positions", [])]
         for i, pp in enumerate(priority_positions):
