@@ -2,12 +2,14 @@
 
 ## Decided
 - [ ] Tags: keep only rank >= 70 (top 30%)
-- [ ] Images: download during fetch, save as `{source}-{sourceId}-{slug}.{ext}`, write manifest.json, strip URLs from data
-  - Preference hierarchy for enrichment:
+- [x] Images: download during fetch, save as `{source}-{sourceId}-{slug}.{ext}`, write manifest.json
+  - `image_downloader.py` extracts URLs from source JSONs and downloads to `images/{franchise}/{type}/`
+  - `enrich_images.py` generates SQL UPDATE statements matching via external IDs in `details` JSONB
+  - Preference hierarchy:
     - creators: anilist > mal
     - entries: mal > anilist > tvdb  
     - characters: anilist > mal
-  - Enrichment script joins images to DB via external IDs
+  - Tested: 1,424 images across 2 franchises
 - [ ] TVDB aliases: keep only eng/jpn/kor
 - [ ] MAL relations: blacklist Summary/Character/Other
 - [ ] MAL theme songs: strip openings/endings
