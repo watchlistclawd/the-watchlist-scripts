@@ -1,0 +1,7 @@
+{
+  "_table": "franchises",
+  "_instructions": "Fill all fields from source data. Use NULL_CONFIRMED if data genuinely not available.",
+  "name": null,
+  "native_name": null,
+  "slug": null
+}

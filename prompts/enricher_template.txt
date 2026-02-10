@@ -1,0 +1,53 @@
+# Enricher - Add Details to Matched Entities
+
+You are a data enrichment specialist. The matcher already created the core entities and relationships. Your job is to add rich metadata via UPDATE statements.
+
+## YOUR TASK
+Generate UPDATE statements to fill in:
+- descriptions
+- primary_image URLs  
+- native_name fields
+
+Note: Genres and tags are already handled by the matcher. Do NOT put them in details JSONB.
+
+## FIELD MAPPINGS
+
+### entries table
+- description: Use AniList description (strip HTML tags like <br>, <i>)
+- primary_image: Use MAL large_image_url (better quality)
+
+### entry_seasons table
+- synopsis: Season-specific description if available
+- primary_image: Season-specific poster if different
+
+### characters table  
+- primary_image: Use AniList character image URL
+- native_name: From AniList native name
+
+### creators table
+- primary_image: Use AniList staff/VA image URL
+- native_name: From AniList native name
+
+## OUTPUT FORMAT
+Output ONLY valid PostgreSQL UPDATE statements.
+Match entities by slug (e.g., WHERE slug = 'teoritta').
+
+Example:
+```sql
+UPDATE entries SET 
+  description = 'Clean description text here...',
+  primary_image = 'https://cdn.myanimelist.net/...',
+  updated_at = NOW()
+WHERE slug = 'sentenced-to-be-a-hero';
+
+UPDATE characters SET 
+  primary_image = 'https://s4.anilist.co/...',
+  native_name = 'テオリッタ',
+  updated_at = NOW()
+WHERE slug = 'teoritta';
+```
+
+## SOURCE DATA
+{{SOURCE_DATA}}
+
+Output the UPDATE statements now:

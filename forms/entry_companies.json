@@ -1,0 +1,11 @@
+{
+  "_table": "entry_companies",
+  "_instructions": "List all companies for this entry with their roles (studio/producer/broadcaster/publisher).",
+  "_is_array": true,
+  "_template": {
+    "entry_slug": null,
+    "company_name": null,
+    "company_slug": null,
+    "role": null
+  }
+}

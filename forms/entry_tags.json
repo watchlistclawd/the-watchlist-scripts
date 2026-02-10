@@ -1,0 +1,11 @@
+{
+  "_table": "entry_tags",
+  "_instructions": "List all tags for this entry. Include category (theme/setting/demographic/content).",
+  "_is_array": true,
+  "_template": {
+    "entry_slug": null,
+    "tag_name": null,
+    "tag_display_name": null,
+    "tag_category": null
+  }
+}

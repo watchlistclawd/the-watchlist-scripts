@@ -1,0 +1,15 @@
+{
+  "_table": "entry_seasons",
+  "_instructions": "One object per season. Fill all fields. Use NULL_CONFIRMED if data genuinely not available.",
+  "_is_array": true,
+  "_template": {
+    "entry_slug": null,
+    "season_number": null,
+    "title": null,
+    "episode_count": null,
+    "air_date_start": null,
+    "air_date_end": null,
+    "synopsis": null,
+    "primary_image": null
+  }
+}

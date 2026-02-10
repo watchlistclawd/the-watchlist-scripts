@@ -1,0 +1,11 @@
+{
+  "_table": "entry_genres",
+  "_instructions": "List all genres for this entry. First genre should have is_primary=true.",
+  "_is_array": true,
+  "_template": {
+    "entry_slug": null,
+    "genre_name": null,
+    "genre_display_name": null,
+    "is_primary": null
+  }
+}

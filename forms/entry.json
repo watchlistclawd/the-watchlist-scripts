@@ -1,0 +1,17 @@
+{
+  "_table": "entries",
+  "_instructions": "Fill all fields from source data. Use NULL_CONFIRMED if data genuinely not available.",
+  "media_type_id": null,
+  "title": null,
+  "alternate_titles": null,
+  "release_date": null,
+  "status": null,
+  "description": null,
+  "locale_code": null,
+  "slug": null,
+  "primary_image": null,
+  "details": {
+    "anilist_id": null,
+    "mal_id": null
+  }
+}
