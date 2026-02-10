@@ -450,6 +450,16 @@ def match_tvdb_seasons_to_anilist(tvdb_series: dict, franchise_name: str) -> lis
     if not aired_seasons:
         return []
 
+    # Build episode lookup by season number
+    # Episodes are stored flat in tvdb_series["episodes"] with seasonNumber field
+    all_episodes = tvdb_series.get("episodes", [])
+    episodes_by_season = {}
+    for ep in all_episodes:
+        s_num = ep.get("seasonNumber", 0)
+        if s_num not in episodes_by_season:
+            episodes_by_season[s_num] = []
+        episodes_by_season[s_num].append(ep)
+
     series_name = tvdb_series.get("name", franchise_name)
     results = []
 
@@ -498,14 +508,16 @@ def match_tvdb_seasons_to_anilist(tvdb_series: dict, franchise_name: str) -> lis
         s_name_en = tvdb_season.get("name", "")  # English name (often empty)
         s_year = tvdb_season.get("year", "")
         
-        # Get episode count for this season
-        s_episodes = tvdb_season.get("episodes", [])
+        # Get episodes for this season from the lookup
+        s_episodes = episodes_by_season.get(s_num, [])
         s_episode_count = len(s_episodes)
         
-        # Get first episode air date
+        # Get first episode air date (episodes are usually sorted by number)
         s_first_aired = ""
         if s_episodes:
-            s_first_aired = s_episodes[0].get("aired", "")
+            # Sort by episode number to get first
+            sorted_eps = sorted(s_episodes, key=lambda e: e.get("number", 0))
+            s_first_aired = sorted_eps[0].get("aired", "")
         
         # Try to get Japanese name from TVDB translations
         s_name_jp = ""
