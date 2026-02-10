@@ -345,14 +345,56 @@ def extract_franchise_entities(franchise_slug: str) -> dict:
         
         print(f"  Processing entry: {entry_name}")
         
+        # Collect all source pairs: main entry + season sources
+        source_pairs = [(anilist_path, jikan_path)]
+        
+        # Also scan _season_sources/ for season-level data (e.g., MAPPA on AoT Final Season)
+        # For season sources, we may only have AniList data (no Jikan pair)
+        # so we also collect unpaired AniList files for company/studio extraction
+        season_sources_path = os.path.join(entry_path, '_season_sources')
+        unpaired_anilist = []
+        if os.path.exists(season_sources_path):
+            for season_dir_name in os.listdir(season_sources_path):
+                season_dir = os.path.join(season_sources_path, season_dir_name, 'sources')
+                s_anilist = os.path.join(season_dir, 'anilist_raw.json')
+                s_jikan = os.path.join(season_dir, 'jikan_raw.json')
+                if os.path.exists(s_anilist) and os.path.exists(s_jikan):
+                    source_pairs.append((s_anilist, s_jikan))
+                elif os.path.exists(s_anilist):
+                    unpaired_anilist.append(s_anilist)
+        
         try:
-            anilist_data = load_json(anilist_path)
-            jikan_data = load_json(jikan_path)
+            all_entry_characters = {}
+            all_entry_creators = {}
+            all_entry_companies = {}
             
-            # Extract entities
-            characters = extract_characters(anilist_data, jikan_data, franchise_slug, entry_name)
-            creators = extract_staff(anilist_data, jikan_data, franchise_slug, entry_name)
-            companies = extract_companies(anilist_data, jikan_data, franchise_slug, entry_name)
+            for al_path, jk_path in source_pairs:
+                anilist_data = load_json(al_path)
+                jikan_data = load_json(jk_path)
+                
+                # Extract entities from this source pair
+                characters = extract_characters(anilist_data, jikan_data, franchise_slug, entry_name)
+                creators = extract_staff(anilist_data, jikan_data, franchise_slug, entry_name)
+                companies = extract_companies(anilist_data, jikan_data, franchise_slug, entry_name)
+                
+                # Merge into entry-level dicts
+                for slug, v in characters.items():
+                    if slug not in all_entry_characters:
+                        all_entry_characters[slug] = v
+                for slug, v in creators.items():
+                    if slug not in all_entry_creators:
+                        all_entry_creators[slug] = v
+                    else:
+                        for role in v.get('roles', []):
+                            if role not in all_entry_creators[slug].get('roles', []):
+                                all_entry_creators[slug].setdefault('roles', []).append(role)
+                for slug, v in companies.items():
+                    if slug not in all_entry_companies:
+                        all_entry_companies[slug] = v
+            
+            characters = all_entry_characters
+            creators = all_entry_creators
+            companies = all_entry_companies
             
             print(f"    Found: {len(characters)} characters, {len(creators)} creators, {len(companies)} companies")
             
@@ -390,6 +432,64 @@ def extract_franchise_entities(franchise_slug: str) -> dict:
             print(f"    Error processing {entry_name}: {e}")
             import traceback
             traceback.print_exc()
+    
+    # Post-processing: franchise-wide company matching by ID
+    # AniList and MAL share studio IDs, so we can match across ALL files
+    # This catches studios like MAPPA that only appear in season-level AniList data
+    print("\n  Franchise-wide company scan (by ID)...")
+    al_studios_by_id = {}
+    mal_studios_by_id = {}
+    
+    for f in Path(franchise_path).rglob('anilist_raw.json'):
+        try:
+            data = load_json(str(f))
+            d = data.get('data', {}).get('Media', data) if 'data' in data else data
+            for node in (d.get('studios', {}).get('nodes', [])):
+                sid = node.get('id')
+                if sid:
+                    al_studios_by_id[sid] = {
+                        'name': node.get('name', ''),
+                        'is_animation_studio': node.get('isAnimationStudio', True)
+                    }
+        except Exception:
+            pass
+    
+    for f in Path(franchise_path).rglob('jikan_raw.json'):
+        try:
+            data = load_json(str(f))
+            # Jikan data may be nested under 'anime', 'data', or flat at root
+            anime = data.get('anime', data.get('data', data))
+            for s in anime.get('studios', []):
+                sid = s.get('mal_id')
+                if sid:
+                    mal_studios_by_id[sid] = {'name': s.get('name', ''), 'type': 'studio'}
+            for p in anime.get('producers', []):
+                pid = p.get('mal_id')
+                if pid:
+                    mal_studios_by_id[pid] = {'name': p.get('name', ''), 'type': 'producer'}
+        except Exception:
+            pass
+    
+    # Match by shared ID
+    for studio_id, al_info in al_studios_by_id.items():
+        if studio_id in mal_studios_by_id:
+            mal_info = mal_studios_by_id[studio_id]
+            company_slug = slugify(al_info['name'])
+            if company_slug and company_slug not in all_companies:
+                all_companies[company_slug] = {
+                    'name': al_info['name'],
+                    'slug': company_slug,
+                    'anilist_id': studio_id,
+                    'mal_id': studio_id,
+                    'is_animation_studio': al_info.get('is_animation_studio', True),
+                    'type': mal_info.get('type', 'studio'),
+                    'franchises': [{'franchise': franchise_slug}],
+                    'anilist': {'id': studio_id, 'name': al_info['name']},
+                    'mal': {'id': studio_id, 'name': mal_info['name']}
+                }
+                print(f"    + {al_info['name']} (ID:{studio_id}) — found via franchise-wide scan")
+    
+    print(f"\n  Final totals: {len(all_characters)} characters, {len(all_creators)} creators, {len(all_companies)} companies")
     
     return {
         'characters': all_characters,
