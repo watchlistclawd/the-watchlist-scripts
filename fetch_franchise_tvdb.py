@@ -703,6 +703,7 @@ def fetch_franchise(franchise_name: str, include_movies: bool = True,
 
     # Step 2: Process each entry
     manifest_entries = []
+    used_slugs = set()  # Track slugs to detect collisions
 
     for i, tvdb_entry in enumerate(tvdb_entries, 1):
         tvdb_id = tvdb_entry["tvdb_id"]
@@ -774,6 +775,22 @@ def fetch_franchise(franchise_name: str, include_movies: bool = True,
                 entry_type = "anime-special"
             else:
                 entry_type = "anime-movie"
+
+        # Detect slug collision and append suffix
+        if entry_slug in used_slugs:
+            suffix_map = {
+                "anime-series": "-tv",
+                "anime-movie": "-movie",
+                "anime-ova": "-ova",
+                "anime-ona": "-ona",
+                "anime-special": "-special",
+            }
+            suffix = suffix_map.get(entry_type, "-entry")
+            original_slug = entry_slug
+            entry_slug = f"{entry_slug}{suffix}"
+            print(f"  ⚠ Slug collision detected! Renamed: {original_slug} → {entry_slug}")
+        
+        used_slugs.add(entry_slug)
 
         # Save
         save_entry_data(
